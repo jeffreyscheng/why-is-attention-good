@@ -54,3 +54,12 @@ exp2_hp = {'batch_size': 25,
            'optimizer': torch.optim.Adam,
            }
 
+### EXPERIMENT 3 CONFIGS ###
+
+exp3_hp = {'batch_size': 25,
+           'learning_rate': 5 * (10 ** (-7)),  # default
+           'num_epochs': 300,  # default
+           'base_loss_fn': torch.nn.CrossEntropyLoss,
+           'optimizer': torch.optim.Adam,
+           }
+

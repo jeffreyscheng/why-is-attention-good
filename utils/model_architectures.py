@@ -7,7 +7,7 @@ class LogisticRegression(torch.nn.Module):
         self.linear = torch.nn.Linear(input_dim, output_dim)
         self.with_attention = with_attention
         if with_attention:
-            self.attn = SelfAttentionLayer(input_dim, output_dim)
+            self.attn = SoftmaxAttention(input_dim, output_dim)
 
     def forward(self, x):
         if self.with_attention:
@@ -25,9 +25,9 @@ class MLP(torch.nn.Module):
         self.with_attention1 = with_attention1
         self.with_attention2 = with_attention2
         if with_attention1:
-            self.attn1 = SelfAttentionLayer(input_dim, hidden_dim)
+            self.attn1 = SoftmaxAttention(input_dim, hidden_dim)
         if with_attention2:
-            self.attn2 = SelfAttentionLayer(hidden_dim, output_dim)
+            self.attn2 = SoftmaxAttention(hidden_dim, output_dim)
 
     def forward(self, x):
         if self.with_attention1:
@@ -43,7 +43,7 @@ class MLP(torch.nn.Module):
         return impulse
 
 
-class SelfAttentionLayer(torch.nn.Module):
+class SoftmaxAttention(torch.nn.Module):
     def __init__(self, input_dim, output_dim):
         super().__init__()
         # we are using query, key, value notation
@@ -58,3 +58,53 @@ class SelfAttentionLayer(torch.nn.Module):
         # computes Softmax(q \cdot k^T)
         # we ignore the temperature parameter sqrt(d_k) from the transformer
         return self.softmax(q * k)
+
+
+class AttendedLayer(torch.nn.Module):
+    def __init__(self, input_dim, output_dim):
+        super().__init__()
+        # we are using query, key, value notation
+        self.V = torch.nn.Linear(input_dim, output_dim)
+        self.attn = SoftmaxAttention(input_dim, output_dim)
+
+    def forward(self, x):
+        return self.V(x) * self.attn(x)
+
+
+class ConstantWidthDeepNet(torch.nn.Module):
+    def __init__(self, input_dim, hidden_dim, depth, output_dim, with_attention=None):
+        super().__init__()
+
+        if with_attention is None:
+            with_attention = [False] * depth
+
+        self.depth = depth
+        self.with_attention = with_attention
+
+        self.layers = torch.nn.ModuleList()
+        for i in range(depth):
+            if i == 0:
+                a = input_dim
+                b = hidden_dim
+            elif i == depth - 1:
+                a = hidden_dim
+                b = output_dim
+            else:
+                a = hidden_dim
+                b = hidden_dim
+            if with_attention[i]:
+                self.layers.append(AttendedLayer(a, b))
+            else:
+                self.layers.append(torch.nn.Linear(a, b))
+
+    def fetch_value_weights(self, layer):
+        if self.with_attention[layer]:
+            return self.layers[layer].V.weight
+        else:
+            return self.layers[layer].weight
+
+    def forward(self, x):
+        impulse = x
+        for layer in self.layers:
+            impulse = layer(impulse)
+        return impulse
