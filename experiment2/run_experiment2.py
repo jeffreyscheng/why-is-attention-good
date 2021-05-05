@@ -63,10 +63,8 @@ def run_exp2_on_conditions(name, hidden_dim, with_attention1=False, with_attenti
         writer.add_scalar('Laziness of Second Layer', dist_2, epoch)
 
 
-# for hidden_dim in [100, 200, 500, 1000, 2000, 5000, 10000]:
-for hidden_dim in [10000, 5000, 2000, 1000, 500, 200, 100]:
-    if hidden_dim != 100:
-        run_exp2_on_conditions('MLP{hd:d}_wo_wo'.format(hd=hidden_dim), hidden_dim, False, False)
+for hidden_dim in [500]:
+    run_exp2_on_conditions('MLP{hd:d}_wo_wo'.format(hd=hidden_dim), hidden_dim, False, False)
     run_exp2_on_conditions('MLP{hd:d}_with_wo'.format(hd=hidden_dim), hidden_dim, True, False)
     run_exp2_on_conditions('MLP{hd:d}_wo_with'.format(hd=hidden_dim), hidden_dim, False, True)
     run_exp2_on_conditions('MLP{hd:d}_with_with'.format(hd=hidden_dim), hidden_dim, False, True)

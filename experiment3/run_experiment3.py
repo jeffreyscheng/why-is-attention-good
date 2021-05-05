@@ -24,6 +24,8 @@ def run_exp3_on_conditions(name, hidden_dim, depth, attn_bool_vector):
     model = move(model)
     loss_fn = exp3_hp['base_loss_fn']()
     optimizer = exp3_hp['optimizer'](model.parameters(), lr=exp3_hp['learning_rate'])
+    prev_activations = []
+
 
     for epoch in range(exp3_hp['num_epochs']):
         model.train()
@@ -31,14 +33,44 @@ def run_exp3_on_conditions(name, hidden_dim, depth, attn_bool_vector):
             x = move(x)
             y = move(y)
 
-            y_hat = model(x)
+            y_hat, activations = model(x)
             loss = loss_fn(y_hat, y)
 
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
 
-            writer.add_scalar('Train Loss', loss, epoch * len(cifar_data['train_loader']) + batch_num)
+            step_idx = epoch * len(cifar_data['train_loader']) + batch_num
+
+            if prev_activations:
+                for layer_idx, X in enumerate(activations):
+                    Y = prev_activations[layer_idx]
+                    d = X.size()[0]
+
+                    # calculate correlation with previous timestep's activations
+                    # X := current activations, BxD
+                    # Y := prev activations, BxD
+                    X_bar = torch.mean(X)
+                    Y_bar = torch.mean(Y)
+
+                    X_res = X - X_bar
+                    Y_res = Y - Y_bar
+
+                    X_mse = torch.square(X_res)
+                    Y_mse = torch.square(Y_res)
+
+                    X_std = torch.sqrt(1 / (d - 1) * torch.sum(X_mse))
+                    Y_std = torch.sqrt(1 / (d - 1) * torch.sum(Y_mse))
+
+                    cov = torch.mean(X_res * Y_res) / torch.numel(X)
+                    corr = cov / (X_std * Y_std)
+
+                    writer.add_scalar("Layer {} activation correlation".format(layer_idx), corr, step_idx)
+                    writer.add_histogram("Layer {} activation distribution".format(layer_idx), X, step_idx)
+
+            prev_activations = activations
+
+            writer.add_scalar('Train Loss', loss, step_idx)
 
         model.eval()
         losses = []
@@ -47,7 +79,7 @@ def run_exp3_on_conditions(name, hidden_dim, depth, attn_bool_vector):
             x = move(x)
             y = move(y)
 
-            y_hat = model(x)
+            y_hat = model(x, with_activations=False)
             loss = loss_fn(y_hat, y)
             losses.append(loss)
             accuracy += (torch.argmax(y_hat, dim=1) == y).int().tolist()
@@ -60,11 +92,15 @@ def run_exp3_on_conditions(name, hidden_dim, depth, attn_bool_vector):
             writer.add_scalar('Diligence of Layer ' + str(i), dist, epoch)
 
 
-# for hidden_dim in [100, 200, 500, 1000, 2000, 5000, 10000]:3
-for hidden_dim in [5000, 1000]:
+for hidden_dim in [1000]:
     for depth in [4]:
-        for attn_bool_vector in [x for x in itertools.product([False, True], repeat=depth)]:
-            if any(attn_bool_vector):
-                run_exp3_on_conditions(
-                    'CWDN{hd:d},{dep:d},{attn}'.format(hd=hidden_dim, dep=depth, attn=str(attn_bool_vector)), hidden_dim,
-                    depth, attn_bool_vector)
+        for attn_bool_vector in [[False, False, False, False],
+                                 [True, False, False, False],
+                                 [False, True, False, False],
+                                 [False, False, True, False],
+                                 [False, False, False, True]]:
+        # for attn_bool_vector in [x for x in itertools.product([False, True], repeat=depth)]:
+        #     if any(attn_bool_vector):
+            run_exp3_on_conditions(
+                'CWDN{hd:d},{dep:d},{attn}'.format(hd=hidden_dim, dep=depth, attn=str(attn_bool_vector)), hidden_dim,
+                depth, attn_bool_vector)

@@ -1,4 +1,5 @@
 import torch
+import math
 
 
 class LogisticRegression(torch.nn.Module):
@@ -46,6 +47,8 @@ class MLP(torch.nn.Module):
 class SoftmaxAttention(torch.nn.Module):
     def __init__(self, input_dim, output_dim):
         super().__init__()
+        self.input_dim = input_dim
+        self.output_dim = output_dim
         # we are using query, key, value notation
         self.Q = torch.nn.Linear(input_dim, output_dim)
         self.K = torch.nn.Linear(input_dim, output_dim)
@@ -57,7 +60,7 @@ class SoftmaxAttention(torch.nn.Module):
         k = self.K(x)
         # computes Softmax(q \cdot k^T)
         # we ignore the temperature parameter sqrt(d_k) from the transformer
-        return self.softmax(q * k)
+        return self.softmax(q * k * 1 / math.sqrt(self.input_dim))
 
 
 class AttendedLayer(torch.nn.Module):
@@ -103,8 +106,13 @@ class ConstantWidthDeepNet(torch.nn.Module):
         else:
             return self.layers[layer].weight
 
-    def forward(self, x):
+    def forward(self, x, with_activations=True):
         impulse = x
+        activations = []
         for layer in self.layers:
             impulse = layer(impulse)
-        return impulse
+            activations.append(impulse)
+        if with_activations:
+            return impulse, activations
+        else:
+            return impulse
