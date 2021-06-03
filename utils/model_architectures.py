@@ -115,4 +115,5 @@ class ConstantWidthDeepNet(torch.nn.Module):
         if with_activations:
             return impulse, activations
         else:
+            del activations
             return impulse
