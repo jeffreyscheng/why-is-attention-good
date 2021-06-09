@@ -3,6 +3,10 @@ results_archive_5.28
 results
 .idea
 
+# server scripts & outputs
+*.slurm
+*.out
+
 .vscode
 
 # Byte-compiled / optimized / DLL files
