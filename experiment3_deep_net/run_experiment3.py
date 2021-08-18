@@ -7,6 +7,7 @@ from os.path import join
 import time
 import torch
 import pandas as pd
+import numpy as np
 import itertools
 import gc
 
@@ -27,11 +28,14 @@ def run_exp3_on_conditions(name, hidden_dim, depth, attn_bool_vector):
     model = move(model)
     loss_fn = exp3_hp['base_loss_fn']()
     optimizer = exp3_hp['optimizer'](model.parameters(), lr=exp3_hp['learning_rate'])
-    prev_activations = []
+    prev_intralayer_outputs = []
+
+    cumul_grad_per_neuron = [move(torch.zeros(layer.V.weight.size())) for layer in model._modules['layers']]
 
     train_time_records = []
     test_time_records = []
-    # sporadic_records = []
+    sporadic_records = pd.DataFrame(columns=['batch_idx', 'architecture', 'run', 'layer', 'activations'])
+    sporadic_records.to_csv(join(run_path, 'sporadic.csv'), index=False)
 
     next_activation_batch_idx = 1
     activation_batch_rate = 1.2
@@ -48,7 +52,7 @@ def run_exp3_on_conditions(name, hidden_dim, depth, attn_bool_vector):
             x = move(x)
             y = move(y)
 
-            y_hat, activations = model(x)
+            y_hat, intralayer_outputs_by_layer = model(x)
             loss = loss_fn(y_hat, y)
 
             optimizer.zero_grad()
@@ -62,9 +66,28 @@ def run_exp3_on_conditions(name, hidden_dim, depth, attn_bool_vector):
                                  'run': 0}  # TODO
             # sporadic_record = train_time_record.copy()
 
-            if prev_activations:
-                for layer_idx, X in enumerate(activations):
-                    Y = prev_activations[layer_idx]
+            if prev_intralayer_outputs:
+                for layer_idx, intralayer_outputs in enumerate(intralayer_outputs_by_layer):
+                    # if 'q_norm' in intralayer_outputs:  # TODO: fix check to be not JANK
+                    #     writer.add_scalar("Layer {} q norm".format(layer_idx), intralayer_outputs['q_norm'], step_idx)
+                    #     writer.add_scalar("Layer {} k norm".format(layer_idx), intralayer_outputs['k_norm'], step_idx)
+                    #     writer.add_scalar("Layer {} v norm".format(layer_idx), intralayer_outputs['v_norm'], step_idx)
+                    #     writer.add_scalar("Layer {} q_hadamard_k norm".format(layer_idx), intralayer_outputs['q_hadamard_k_norm'], step_idx)
+                    #     writer.add_scalar("Layer {} attn weight norm".format(layer_idx), intralayer_outputs['attn_weight_norm'], step_idx)
+                    #     writer.add_scalar("Layer {} output norm".format(layer_idx), intralayer_outputs['output_norm'], step_idx)
+                    #
+                    #     writer.add_scalar("Layer {} q mean".format(layer_idx), intralayer_outputs['q_mean'], step_idx)
+                    #     writer.add_scalar("Layer {} k mean".format(layer_idx), intralayer_outputs['k_mean'], step_idx)
+                    #     writer.add_scalar("Layer {} v mean".format(layer_idx), intralayer_outputs['v_mean'], step_idx)
+                    #     writer.add_scalar("Layer {} q_hadamard_k mean".format(layer_idx),
+                    #                       intralayer_outputs['q_hadamard_k_mean'], step_idx)
+                    #     writer.add_scalar("Layer {} attn weight mean".format(layer_idx),
+                    #                       intralayer_outputs['attn_weight_mean'], step_idx)
+                    #     writer.add_scalar("Layer {} output mean".format(layer_idx), intralayer_outputs['output_mean'],
+                    #                       step_idx)
+
+                    X = intralayer_outputs['output']
+                    Y = prev_intralayer_outputs[layer_idx]['output']
 
                     # calculate correlation with previous timestep's activations
                     # X := current activations, BxD
@@ -93,12 +116,54 @@ def run_exp3_on_conditions(name, hidden_dim, depth, attn_bool_vector):
                         train_time_record['layer_{}_gini'.format(layer_idx)] = gini_coeff
                         writer.add_scalar("Layer {} Gini".format(layer_idx), gini_coeff, step_idx)
 
+                        quantile_dict = {}
+                        cum_quantile_dict = {}
+                        V_norm_dict = {}
+                        for i, layer in enumerate(model._modules['layers']):
+                            quantiles = np.quantile(layer.V.weight.grad.flatten().tolist(), exp3_hp['quantiles'])
+                            quantile_dict[i] = quantiles
+                            writer.add_scalar("Layer {} 20th percentile gradient".format(i), quantiles[2],
+                                              step_idx)
+                            writer.add_scalar("Layer {} 50th percentile gradient".format(i), quantiles[5],
+                                              step_idx)
+                            writer.add_scalar("Layer {} 80th percentile gradient".format(i), quantiles[8],
+                                              step_idx)
+
+                            cumul_grad_per_neuron[i] = (layer.V.weight.grad + cumul_grad_per_neuron[i] * step_idx) / (
+                                        step_idx + 1)
+                            cum_quantiles = np.quantile(cumul_grad_per_neuron[i].flatten().tolist(),
+                                                        exp3_hp['quantiles'])
+                            cum_quantile_dict[i] = cum_quantiles
+                            writer.add_scalar("Layer {} 20th percentile gradient average".format(i), cum_quantiles[2],
+                                              step_idx)
+                            writer.add_scalar("Layer {} 50th percentile gradient average".format(i), cum_quantiles[5],
+                                              step_idx)
+                            writer.add_scalar("Layer {} 80th percentile gradient average".format(i), cum_quantiles[8],
+                                              step_idx)
+
+                            V_norm = torch.linalg.norm(layer.V.weight, ord='nuc')
+                            writer.add_scalar("Layer {} weight norm".format({i}), V_norm, step_idx)
+                            V_norm_dict[i] = V_norm
+
+                        sporadic_df = pd.read_csv(join(run_path, 'sporadic.csv'))
+                        sporadic_df = sporadic_df.append({'batch_idx': step_idx,
+                                                          'architecture': name,
+                                                          'run': 0,
+                                                          'layer': layer_idx,
+                                                          'activations': X.cpu().detach().numpy(),
+                                                          'gradient_quantiles': quantile_dict,
+                                                          'v_norm': V_norm_dict},
+                                                         ignore_index=True)
+                        sporadic_df.to_csv(join(run_path, 'sporadic.csv'), index=False)
+                        del sporadic_df
+                        gc.collect()
+
                     del Y, Y_std, Y_res, Y_mse, Y_bar, X_std, X_res, X_mse, X_bar, corr, cov
 
                 if step_idx >= int(next_activation_batch_idx):
                     next_activation_batch_idx = max(step_idx, activation_batch_rate * next_activation_batch_idx)
 
-            prev_activations = activations
+            prev_intralayer_outputs = intralayer_outputs_by_layer
 
             writer.add_scalar('Train Loss', loss, step_idx)
             train_time_record['train_loss'] = loss.item()
@@ -115,7 +180,7 @@ def run_exp3_on_conditions(name, hidden_dim, depth, attn_bool_vector):
             x = move(x)
             y = move(y)
 
-            y_hat = model(x, with_activations=False)
+            y_hat, _ = model(x)
             loss = loss_fn(y_hat, y)
             losses.append(loss)
             accuracy += (torch.argmax(y_hat, dim=1) == y).int().tolist()
@@ -152,8 +217,8 @@ for hidden_dim in [1000]:
                                  [False, True, False, False],
                                  [False, False, True, False],
                                  [False, False, False, True]]:
-        # for attn_bool_vector in [x for x in itertools.product([False, True], repeat=depth)]:
-        #     if any(attn_bool_vector):
+            # for attn_bool_vector in [x for x in itertools.product([False, True], repeat=depth)]:
+            #     if any(attn_bool_vector):
             run_exp3_on_conditions(
-                'CWDN{hd:d},{dep:d},{attn},test'.format(hd=hidden_dim, dep=depth, attn=str(attn_bool_vector)), hidden_dim,
+                'CWDN{hd:d},{dep:d},{attn}'.format(hd=hidden_dim, dep=depth, attn=str(attn_bool_vector)), hidden_dim,
                 depth, attn_bool_vector)

@@ -44,6 +44,19 @@ class MLP(torch.nn.Module):
         return impulse
 
 
+class NotAttendedLayer(torch.nn.Module):
+    def __init__(self, input_dim, output_dim):
+        super().__init__()
+        self.V = torch.nn.Linear(input_dim, output_dim)
+
+    def forward(self, x):
+        return self.V(x)
+
+    def forward_intralayer(self, x):
+        output = self.V(x)
+        return output, {'output': output,  'output_norm': torch.mean(output, [0, 1])}
+
+
 class SoftmaxAttention(torch.nn.Module):
     def __init__(self, input_dim, output_dim):
         super().__init__()
@@ -60,7 +73,7 @@ class SoftmaxAttention(torch.nn.Module):
         k = self.K(x)
         # computes Softmax(q \cdot k^T)
         # we ignore the temperature parameter sqrt(d_k) from the transformer
-        return self.softmax(q * k * 1 / math.sqrt(self.input_dim))
+        return self.softmax(q * k / math.sqrt(self.input_dim))
 
 
 class AttendedLayer(torch.nn.Module):
@@ -72,6 +85,38 @@ class AttendedLayer(torch.nn.Module):
 
     def forward(self, x):
         return self.V(x) * self.attn(x)
+
+    def forward_intralayer(self, x):
+        b, d = x.size()
+
+        q = self.attn.Q(x)  # BxD
+        k = self.attn.K(x)  # BxD
+        v = self.V(x)  # BxD
+        had = q * k
+        attn_weight = torch.softmax(q * k * 1 / math.sqrt(d), dim=1)
+        output = self.V(x) * self.attn(x)  # BxD
+
+        def get_mean(x):
+            return torch.mean(x, [0, 1])
+
+        def get_norm(x):
+            return torch.sum(x * x)
+
+        intralayer_outputs = {'q_mean': get_mean(q),
+                              'k_mean': get_mean(k),
+                              'q_hadamard_k_mean': get_mean(had),
+                              'attn_weight_mean': get_mean(attn_weight),
+                              'v_mean': get_mean(v),
+                              'output_mean': get_mean(output),
+                              'q_norm': get_norm(q),
+                              'k_norm': get_norm(k),
+                              'q_hadamard_k_norm': get_norm(had),
+                              'attn_weight_norm': get_norm(attn_weight),
+                              'v_norm': get_norm(v),
+                              'output_norm': get_norm(output),
+                              'output': output}
+
+        return output, intralayer_outputs
 
 
 class ConstantWidthDeepNet(torch.nn.Module):
@@ -98,22 +143,28 @@ class ConstantWidthDeepNet(torch.nn.Module):
             if with_attention[i]:
                 self.layers.append(AttendedLayer(a, b))
             else:
-                self.layers.append(torch.nn.Linear(a, b))
+                self.layers.append(NotAttendedLayer(a, b))
 
     def fetch_value_weights(self, layer):
-        if self.with_attention[layer]:
-            return self.layers[layer].V.weight
-        else:
-            return self.layers[layer].weight
+        return self.layers[layer].V.weight
 
-    def forward(self, x, with_activations=True):
+    # def forward(self, x, with_activations=True):
+    #     impulse = x
+    #     activations = []
+    #     for layer in self.layers:
+    #         impulse = layer(impulse)
+    #         activations.append(impulse)
+    #     if with_activations:
+    #         return impulse, activations
+    #     else:
+    #         del activations
+    #         return impulse
+
+    def forward(self, x):
         impulse = x
-        activations = []
+        intralayer_outputs_by_layer = []
         for layer in self.layers:
-            impulse = layer(impulse)
-            activations.append(impulse)
-        if with_activations:
-            return impulse, activations
-        else:
-            del activations
-            return impulse
+            impulse, norms = layer.forward_intralayer(impulse)
+            intralayer_outputs_by_layer.append(norms)
+
+        return impulse, intralayer_outputs_by_layer

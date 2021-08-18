@@ -18,7 +18,7 @@ def safe_mkdir(path):
 
 
 safe_mkdir(join(path_configs['root_dir'], 'data'))
-safe_mkdir(join(path_configs['root_dir'], 'results'))
+safe_mkdir(join(path_configs['root_dir'], 'results_archive_6.23'))
 
 ### HARDWARE CONFIGS ###
 
@@ -56,10 +56,13 @@ exp2_hp = {'batch_size': 25,
 
 ### EXPERIMENT 3 CONFIGS ###
 
-exp3_hp = {'batch_size': 25,
-           'learning_rate': 5 * (10 ** (-7)),  # default
-           'num_epochs': 300,  # default
-           'base_loss_fn': torch.nn.CrossEntropyLoss,
-           'optimizer': torch.optim.Adam,
-           }
-
+exp31_hp = {'batch_size': 25,
+            'learning_rate': 5 * (10 ** (-7)),  # default
+            'num_epochs': 1000,  # default
+            'base_loss_fn': torch.nn.CrossEntropyLoss,
+            'optimizer': torch.optim.Adam,
+            'quantiles': [0.1 * i for i in range(11)],
+            'depth': 4,
+            'hidden_dim': 1000,
+            'num_runs': 5
+            }
