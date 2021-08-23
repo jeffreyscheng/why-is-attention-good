@@ -66,3 +66,18 @@ exp31_hp = {'batch_size': 25,
             'hidden_dim': 1000,
             'num_runs': 5
             }
+
+exp32_hp = {'batch_size': 5,
+            'num_epochs': 1000,  # default
+            'base_loss_fn': torch.nn.CrossEntropyLoss,
+            'optimizer': torch.optim.Adam,
+            'depth': 4,
+            }
+
+exp33_hp = {'batch_size': 25,
+            'num_epochs': 10005,  # default
+            'base_loss_fn': torch.nn.CrossEntropyLoss,
+            'optimizer': torch.optim.Adam,
+            'depth': 4,
+            }
+

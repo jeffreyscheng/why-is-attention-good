@@ -1,7 +1,7 @@
 from utils.data_stuff import get_cifar_data
 from utils.model_architectures import ConstantWidthDeepNet
 from utils.evaluation import batched_gini
-from params import machine_configs, path_configs, exp31_hp, move
+from params import machine_configs, path_configs, exp32_hp, move
 from torch.utils.tensorboard import SummaryWriter
 from os.path import join
 import time
@@ -13,10 +13,10 @@ import gc
 import torch.multiprocessing as mp
 
 
-cifar_data = get_cifar_data(data_dir=path_configs['data_dir'], batch_size=exp31_hp['batch_size'])
+cifar_data = get_cifar_data(data_dir=path_configs['data_dir'], batch_size=exp32_hp['batch_size'])
 
 
-def run_exp31_on_conditions(run, hidden_dim, depth, attention_layers_as_bool, results_dir,
+def run_exp32_on_conditions(run, hidden_dim, depth, attention_layers_as_bool, results_dir,
                             train_time_list, test_time_list):
     # set up tensorboard
 
@@ -45,12 +45,12 @@ def run_exp31_on_conditions(run, hidden_dim, depth, attention_layers_as_bool, re
     model = move(model)
 
     # set up training
-    loss_fn = exp31_hp['base_loss_fn']()
-    optimizer = exp31_hp['optimizer'](model.parameters(), lr=exp31_hp['learning_rate'])
+    loss_fn = exp32_hp['base_loss_fn']()
+    optimizer = exp32_hp['optimizer'](model.parameters(), lr=exp32_hp['learning_rate'])
     train_time_records = []
     test_time_records = []
 
-    for epoch in range(exp31_hp['num_epochs']):
+    for epoch in range(exp32_hp['num_epochs']):
         gc.collect()
         test_time_record = {'epoch': epoch,
                             'architecture': architecture,
@@ -126,7 +126,7 @@ def run_exp31_on_conditions(run, hidden_dim, depth, attention_layers_as_bool, re
 
 if __name__ == '__main__':
     torch.multiprocessing.set_start_method('spawn', force=True)
-    results_subdirectory = join(path_configs['results_dir'], 'experiment_3_1')
+    results_subdirectory = join(path_configs['results_dir'], 'experiment_3_2')
 
     # each control run uses 1729 MB of memory
     # each non-control uses 2027 MB of memory
@@ -142,18 +142,18 @@ if __name__ == '__main__':
                              [False, False, True, False],
                              [False, False, False, True],
                              [False, False, False, False]]:
-        input_tuple = (exp31_hp['hidden_dim'],
-                       exp31_hp['depth'],
+        input_tuple = (exp32_hp['hidden_dim'],
+                       exp32_hp['depth'],
                        attn_bool_vector,
                        results_subdirectory,
                        train_time_dfs,
                        test_time_dfs)
-        input_tuples_with_run_idx = [tuple([run_idx]) + input_tuple for run_idx in range(exp31_hp['num_runs'])]
+        input_tuples_with_run_idx = [tuple([run_idx]) + input_tuple for run_idx in range(exp32_hp['num_runs'])]
 
         while input_tuples_with_run_idx:
             processes = []
             for rank in range(min(num_processes, len(input_tuples_with_run_idx))):
-                p = mp.Process(target=run_exp31_on_conditions, args=input_tuples_with_run_idx.pop(), daemon=False)
+                p = mp.Process(target=run_exp32_on_conditions, args=input_tuples_with_run_idx.pop(), daemon=False)
                 p.start()
                 processes.append(p)
             for p in processes:
