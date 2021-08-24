@@ -112,6 +112,7 @@ class AttendedLayer(torch.nn.Module):
                               'k_norm': get_norm(k),
                               'q_hadamard_k_norm': get_norm(had),
                               'attn_weight_norm': get_norm(attn_weight),
+                              'v_vector': v,
                               'v_norm': get_norm(v),
                               'output_norm': get_norm(output),
                               'output': output}
