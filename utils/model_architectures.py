@@ -54,7 +54,9 @@ class NotAttendedLayer(torch.nn.Module):
 
     def forward_intralayer(self, x):
         output = self.V(x)
-        return output, {'output': output,  'output_norm': torch.mean(output, [0, 1])}
+        return output, {'output': output,
+                        'v_vector': output,
+                        'output_norm': torch.mean(output, [0, 1])}
 
 
 class SoftmaxAttention(torch.nn.Module):

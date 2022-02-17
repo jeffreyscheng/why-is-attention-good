@@ -206,7 +206,7 @@ def run_exp33_on_conditions(name, hidden_dim, depth, attn_bool_vector):
     # sporadic_df = pd.DataFrame(sporadic_records)
 
     train_time_df.to_csv(join(run_path, 'train_time.csv'))
-    test_time_df.to_csv(join(run_path, 'test_time.csv'))
+    test_time_df.to_csv(join(run_path, '3000test2.csv'))
     # sporadic_df.to_pickle(join(run_path, 'sporadic.pkl'))
 
 

@@ -1,8 +1,11 @@
 import matplotlib.pyplot as plt
 import pandas as pd
 from params import exp31_hp, path_configs
+import os
 from os.path import join
 import seaborn as sns
+import time
+
 from mpl_toolkits.mplot3d import Axes3D
 
 # create diligence plot with error bands
@@ -10,12 +13,30 @@ from mpl_toolkits.mplot3d import Axes3D
 sns.set_theme(style='darkgrid')
 
 results_subdirectory = join(path_configs['results_dir'], 'experiment_3_3')
-test_time_df = pd.read_csv(join(results_subdirectory, 'test_time.csv'))
+train_dfs = []
+test_dfs = []
 
+
+tick = time.time()
+for filename in os.listdir(results_subdirectory):
+    if filename.endswith('.csv'):
+        if 'train' in filename:
+            train_dfs.append(pd.read_csv(join(results_subdirectory, filename)))
+        elif 'test' in filename:
+            test_dfs.append(pd.read_csv(join(results_subdirectory, filename)))
+
+train_time_df = pd.concat(train_dfs, axis=0, ignore_index=True, join='inner')
+test_time_df = pd.concat(test_dfs, axis=0, ignore_index=True, join='inner')
+
+print(time.time() - tick, "finished reading")
 
 # groupby (hidden_dim, epoch, architecture); get max accuracy
 def get_best_accuracies(df):
     best_row = df['test_accuracy'].idxmax()
+    if df.loc[best_row, :].isna().values.any():
+        print(best_row)
+        print(df.loc[best_row, :])
+        raise ValueError
     return df.loc[best_row, :]
 
 

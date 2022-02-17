@@ -1,5 +1,5 @@
 from utils.data_stuff import get_cifar_data
-from utils.model_architectures import ConstantWidthDeepNet
+from utils.model_architectures import ConstantWidthDeepNet, AttendedLayer
 from utils.evaluation import batched_gini
 from params import machine_configs, path_configs, exp32_hp, move
 from torch.utils.tensorboard import SummaryWriter
@@ -20,7 +20,7 @@ cifar_data = get_cifar_data(
 
 
 def run_exp32_on_conditions(run, hidden_dim, depth, attention_layers_as_bool, results_dir,
-                            train_time_list, test_time_list, sporadic_list):
+                            train_time_list, test_time_list, sporadic_list, model_params):
     # set up tensorboard
 
     if not any(attention_layers_as_bool):
@@ -65,8 +65,14 @@ def run_exp32_on_conditions(run, hidden_dim, depth, attention_layers_as_bool, re
     # Get a sample of neurons in each layer
     neuron_layer_to_idxs = {layer_idx: random.sample(
         range(hidden_dim), exp32_hp['num_neurons_to_track']) for layer_idx in range(4)}
+    neuron_layer_to_idxs[3] = list(range(10))
 
     for epoch in range(exp32_hp['num_epochs']):
+        # todo: comment out
+        # if epoch > 0 and epoch % 20 == 0:
+        #     breakpoint()
+
+
         gc.collect()
         test_time_record = {'epoch': epoch,
                             'architecture': architecture,
@@ -96,8 +102,6 @@ def run_exp32_on_conditions(run, hidden_dim, depth, attention_layers_as_bool, re
             writer.add_scalar('Train Loss', loss, step_idx)
             train_time_record['train_loss'] = loss.item()
 
-            train_time_records.append(train_time_record)
-
             # GET CONSISTENT TRAIN-TIME METRICS TODO
             # 1. Intralayer Norms
             # 2. Activation Correlations
@@ -108,9 +112,8 @@ def run_exp32_on_conditions(run, hidden_dim, depth, attention_layers_as_bool, re
                 for layer_idx, intralayer_outputs in enumerate(intralayer_outputs_by_layer):
                     # 1. Intralayer Norms
                     if 'q_norm' in intralayer_outputs:  # TODO: fix check to be not JANK
-                        writer.add_scalar("Layer {} q_hadamard_k norm".format(
-                            layer_idx), intralayer_outputs['q_hadamard_k_norm'], step_idx)
-                        train_time_record['Layer {} q_hadamard_k norm'] = intralayer_outputs['q_hadamard_k_norm']
+                        writer.add_scalar("Layer {} q_hadamard_k norm".format(layer_idx), intralayer_outputs['q_hadamard_k_norm'], step_idx)
+                        train_time_record['Layer {} q_hadamard_k norm'.format(layer_idx)] = intralayer_outputs['q_hadamard_k_norm'].item()
 
                     # 2. Activation Correlations
                     X = intralayer_outputs['output']
@@ -141,21 +144,14 @@ def run_exp32_on_conditions(run, hidden_dim, depth, attention_layers_as_bool, re
                         layer_idx), corr, step_idx)
 
                     # 3. Save subset of neurons' activations and gradients
-                    activation_slice = intralayer_outputs['v'][:, neuron_layer_to_idxs[layer_idx]].flatten(
-                    ).tolist()  # takes B x hidden_dim -> B x sample_size
-                    assert len(
-                        activation_slice) == exp32_hp['batch_size'] * exp32_hp['num_neurons_to_track']
+                    activation_slice = intralayer_outputs['v_vector'][:, neuron_layer_to_idxs[layer_idx]].flatten().tolist()  # takes B x hidden_dim -> B x sample_size
                     train_time_record['layer_{}_neuron_level_activations'.format(
                         layer_idx)] = activation_slice
 
-                    gradient_xsection = model.fetch_value_weights(
-                        layer_idx).grad  # B x layer_(i+1)_width x layer_(i)_width
-                    breakpoint()
-                    # B x sample_size x layer_(i)_width
-                    gradient_xsection = gradient_xsection[:,
-                                                          :, neuron_layer_to_idxs[layer_idx]]
-                    gradient_norm_slice = torch.sum(torch.square(gradient_xsection), dim=[
-                                                    0, 2]).squeeze().flatten().tolist()
+                    gradient_xsection = model.fetch_value_weights(layer_idx).grad  # layer_(i+1)_width x layer_(i)_width
+                    # sample_size x layer_(i)_width
+                    gradient_xsection = gradient_xsection[neuron_layer_to_idxs[layer_idx], :]
+                    gradient_norm_slice = torch.sum(torch.square(gradient_xsection), dim=1).squeeze().flatten().tolist()
                     train_time_record['layer_{}_neuron_level_gradient_norms'.format(
                         layer_idx)] = gradient_norm_slice
 
@@ -169,7 +165,11 @@ def run_exp32_on_conditions(run, hidden_dim, depth, attention_layers_as_bool, re
                     writer.add_scalar("Layer {} Hoyer sparsity".format(
                         layer_idx), hoyer_sparsity, step_idx)
 
-                    del Y, Y_std, Y_res, Y_mse, Y_bar, X_std, X_res, X_mse, X_bar, corr, cov, N, gradient_xsection, l1_X, l2_X
+                    del X, Y, Y_std, Y_res, Y_mse, Y_bar, X_std, X_res, X_mse, X_bar, corr, cov, N
+                    del gradient_xsection
+                    del l1_X, l2_X
+
+            prev_intralayer_outputs = intralayer_outputs_by_layer
 
             # GET SPORADIC METRICS TODO
             # 1. Activation Distribution
@@ -178,19 +178,20 @@ def run_exp32_on_conditions(run, hidden_dim, depth, attention_layers_as_bool, re
             # 4. Norm, Stable Rank of Layer Weight Matrix
 
             if step_idx >= int(next_activation_batch_idx):
+                gc.collect()
                 sporadic_record = {'batch_idx': step_idx,
                                    'architecture': architecture,
                                    'run': run}
+                for layer_idx, intralayer_outputs in enumerate(intralayer_outputs_by_layer):
+                    # 1. Activation Distribution (can't add to record bc too big)
+                    writer.add_histogram(
+                        "Layer {} activation distribution".format(layer_idx), intralayer_outputs['output'], step_idx)
 
-                # 1. Activation Distribution (can't add to record bc too big)
-                writer.add_histogram(
-                    "Layer {} activation distribution".format(layer_idx), X, step_idx)
-
-                # 2. Gini Measure on Activations
-                gini_coeff = batched_gini(X)
-                sporadic_record['layer_{}_gini'.format(layer_idx)] = gini_coeff
-                writer.add_scalar("Layer {} Gini".format(
-                    layer_idx), gini_coeff, step_idx)
+                    # 2. Gini Measure on Activations
+                    gini_coeff = batched_gini(intralayer_outputs['output'])
+                    sporadic_record['layer_{}_gini'.format(layer_idx)] = gini_coeff
+                    writer.add_scalar("Layer {} Gini".format(
+                        layer_idx), gini_coeff, step_idx)
 
                 # 3. Gradient Distribution. and
                 # 4. Norm, Stable Rank of Layer Weight Matrix
@@ -200,7 +201,7 @@ def run_exp32_on_conditions(run, hidden_dim, depth, attention_layers_as_bool, re
                 V_stable_rank_dict = {}
                 for i, layer in enumerate(model._modules['layers']):
                     quantiles = np.quantile(
-                        layer.V.weight.grad.flatten().tolist(), exp3_hp['quantiles'])
+                        layer.V.weight.grad.flatten().tolist(), exp32_hp['quantiles'])
                     quantile_dict[i] = quantiles
                     writer.add_scalar("Layer {} 20th percentile gradient".format(i), quantiles[2],
                                       step_idx)
@@ -233,9 +234,34 @@ def run_exp32_on_conditions(run, hidden_dim, depth, attention_layers_as_bool, re
                         {i}), V_stable_rank, step_idx)
                     V_stable_rank_dict[i] = V_stable_rank
 
+                    if isinstance(layer, AttendedLayer):
+                        # TODO: fix
+                        Q_nuc_norm = float(torch.linalg.matrix_norm(
+                            layer.attn.Q.weight, ord='nuc'))
+                        writer.add_scalar("Layer {} Q nuclear norm".format(
+                            {i}), Q_nuc_norm, step_idx)
+
+                        Q_stable_rank = float(torch.linalg.matrix_norm(
+                            layer.attn.Q.weight, ord='fro') / torch.linalg.matrix_norm(layer.attn.Q.weight, ord=2))
+                        writer.add_scalar("Layer {} Q stable rank".format(
+                            {i}), Q_stable_rank, step_idx)
+
+                        K_nuc_norm = float(torch.linalg.matrix_norm(
+                            layer.attn.K.weight, ord='nuc'))
+                        writer.add_scalar("Layer {} K nuclear norm".format(
+                            {i}), K_nuc_norm, step_idx)
+
+                        K_stable_rank = float(torch.linalg.matrix_norm(
+                            layer.attn.K.weight, ord='fro') / torch.linalg.matrix_norm(layer.attn.K.weight, ord=2))
+                        writer.add_scalar("Layer {} K stable rank".format(
+                            {i}), K_stable_rank, step_idx)
+
+                        del K_nuc_norm, K_stable_rank, Q_nuc_norm, Q_stable_rank, V_nuc_norm, V_stable_rank
+
+
                 sporadic_record['gradient_quantiles'] = quantile_dict
                 sporadic_record['cumulative_gradient_quantiles'] = cum_quantile_dict
-                sporadic_record['weight_nuclear_norms'] = V_nuc_norm
+                sporadic_record['weight_nuclear_norms'] = V_nuc_norm_dict
                 sporadic_record['weight_stable_rank'] = V_stable_rank_dict
 
                 sporadic_records.append(sporadic_record)
@@ -244,6 +270,7 @@ def run_exp32_on_conditions(run, hidden_dim, depth, attention_layers_as_bool, re
                     step_idx, activation_batch_rate * next_activation_batch_idx)
 
             del x, y, y_hat, loss
+            train_time_records.append(train_time_record)
 
         # test loop
         model.eval()
@@ -288,6 +315,7 @@ def run_exp32_on_conditions(run, hidden_dim, depth, attention_layers_as_bool, re
     train_time_list.append(train_time_df)
     test_time_list.append(test_time_df)
     sporadic_list.append(sporadic_df)
+    model_params[(hidden_dim, architecture)] = model.cpu().state_dict()
 
 
 if __name__ == '__main__':
@@ -303,8 +331,9 @@ if __name__ == '__main__':
     train_time_dfs = manager.list([])
     test_time_dfs = manager.list([])
     sporadic_dfs = manager.list([])
+    model_params = manager.dict({})
 
-    pool = mp.Pool(processes=5)
+    # pool = mp.Pool(processes=3)
 
     attn_bool_vectors = [[True, False, False, False],
                          [False, True, False, False],
@@ -319,9 +348,12 @@ if __name__ == '__main__':
                      results_subdirectory,
                      train_time_dfs,
                      test_time_dfs,
-                     sporadic_dfs) for attn_bool_vector in attn_bool_vectors]
-    pool.starmap(run_exp32_on_conditions, input_tuples)
-    pool.close()
+                     sporadic_dfs,
+                     model_params) for attn_bool_vector in attn_bool_vectors]
+    # pool.starmap(run_exp32_on_conditions, input_tuples)
+    # pool.close()
+
+    results = [run_exp32_on_conditions(*input_tuple) for input_tuple in input_tuples]
 
     agg_train_time_df = pd.concat(train_time_dfs)
     agg_test_time_df = pd.concat(test_time_dfs)
@@ -329,3 +361,4 @@ if __name__ == '__main__':
     agg_train_time_df.to_csv(join(results_subdirectory, 'train_time.csv'))
     agg_test_time_df.to_csv(join(results_subdirectory, 'test_time.csv'))
     agg_sporadic_df.to_csv(join(results_subdirectory, 'sporadic.csv'))
+    torch.save(model_params, join(results_subdirectory, 'model_params.csv'))

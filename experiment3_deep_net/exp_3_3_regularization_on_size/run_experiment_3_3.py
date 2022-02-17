@@ -41,7 +41,7 @@ def run_exp33_on_conditions(run, hidden_dim, learning_rate, depth, attention_lay
              2: '2nd',
              3: '3rd'}
         architecture = 'Attention in the {layer_ord} Layer'.format(hidden_dim=hidden_dim,
-                                                                                      layer_ord=d[attention_layers_as_bool.index(True)])
+                                                                   layer_ord=d[attention_layers_as_bool.index(True)])
     unique_run_name = ','.join([architecture, str(hidden_dim), str(learning_rate)])
     tensorboard_run_path = join(results_dir, unique_run_name, str(time.time()))
     writer = SummaryWriter(tensorboard_run_path)
@@ -70,7 +70,7 @@ def run_exp33_on_conditions(run, hidden_dim, learning_rate, depth, attention_lay
                             'architecture': architecture,
                             'hidden_dim': hidden_dim,
                             'learning_rate': learning_rate,
-                            'run': run}  # TODO
+                            'run': run}
 
         # train loop
         model.train()
@@ -78,7 +78,7 @@ def run_exp33_on_conditions(run, hidden_dim, learning_rate, depth, attention_lay
             x = conditional_move(x, gpu_has_room)
             y = conditional_move(y, gpu_has_room)
 
-            y_hat, intralayer_outputs_by_layer = model(x)
+            y_hat, _ = model(x)
             loss = loss_fn(y_hat, y)
 
             optimizer.zero_grad()
@@ -91,7 +91,7 @@ def run_exp33_on_conditions(run, hidden_dim, learning_rate, depth, attention_lay
                                  'architecture': architecture,
                                  'hidden_dim': hidden_dim,
                                  'learning_rate': learning_rate,
-                                 'run': 0}  # TODO
+                                 'run': run}
 
             writer.add_scalar('Train Loss', loss, step_idx)
             train_time_record['train_loss'] = loss.item()
@@ -150,8 +150,8 @@ if __name__ == '__main__':
     # print(hidden_dim_to_try)
     # learning_rate_to_try = create_logarithmic_lattice(10 ** (-5), 10 ** (-9), 5)
     # print(learning_rate_to_try)
-    hidden_dim_to_try = [1400]
-    learning_rate_to_try = [10 ** (-6), 10 ** (-7), 10 ** (-8)]
+    hidden_dim_to_try = [3000]
+    learning_rate_to_try = [10 ** (-6), 5 * (10 ** (-6))]
 
     manager = mp.Manager()
     train_time_dfs = manager.list([])
@@ -166,7 +166,7 @@ if __name__ == '__main__':
             gc.collect()
 
             #  just based on amount of stuff that will fit on an 11 GB GPU
-            if hidden_dim <= 1400:
+            if hidden_dim <= 1350:
                 max_num_processes = 5
             elif hidden_dim <= 3000:
                 max_num_processes = 3
@@ -197,7 +197,8 @@ if __name__ == '__main__':
             pool.starmap(run_exp33_on_conditions, input_tuples)
             pool.close()
 
-    agg_train_time_df = pd.concat(train_time_dfs)
-    agg_test_time_df = pd.concat(test_time_dfs)
-    agg_train_time_df.to_csv(join(results_subdirectory, 'train_time.csv'))
-    agg_test_time_df.to_csv(join(results_subdirectory, 'test_time.csv'))
+            # re-write every time it finishes a run
+            agg_train_time_df = pd.concat(train_time_dfs)
+            agg_test_time_df = pd.concat(test_time_dfs)
+            agg_train_time_df.to_csv(join(results_subdirectory, 'train_time.csv'))
+            agg_test_time_df.to_csv(join(results_subdirectory, 'test_time.csv'))
